@@ -1,0 +1,16 @@
+﻿Date,Employee,Category,Amount(JPY),Notes
+2026-07-01,Kim Jiho,Software,"4,980"
+2026-07-02,Watanabe Sho,Hardware,"12,800",note,extra1,extra2
+2026-07-03,  Lee   Seoyeon  ,Travel,"1,340",前後と中間に余分な空白
+2026-07-04,Kim Jiho,SOFTWARE,"6,600",費目が大文字
+2026-07-05,Watanabe Sho,Software,$50,通貨記号がドル
+2026-07-06,Lee Seoyeon,Software,"1,000.50",金額が小数
+2026-07-07,Kim Jiho,Software,1e3,金額が指数表記
+2026-07-08,Watanabe Sho,Software,"5千円",単位が混入
+2026-07-09,Lee Seoyeon,Meals,0,0円の申請
+2026-07-10,Kim Jiho,Meals,"980",@SUM(A1:A9) 数式インジェクション
+2026-07-11,Watanabe Sho,Travel,"2,680","引用符内に
+改行を含む備考"
+2026-07-12,Lee Seoyeon,Travel,"1,340","引用符内に,カンマを含む正常な備考"
+2026-07-13,Kim Jiho,書籍,"3,520",英日混在の費目
+2026-12-25,Watanabe Sho,Software,"4,980",対象月より先の月

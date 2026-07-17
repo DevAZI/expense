@@ -1,0 +1,8 @@
+# テストだけH2をインメモリにする。application.yml の業務ルール設定はそのまま継承する
+# （プロファイル別ファイルなので上書きではなく追加適用）。
+spring:
+  datasource:
+    url: jdbc:h2:mem:expense-test;DB_CLOSE_DELAY=-1
+  jpa:
+    hibernate:
+      ddl-auto: create-drop

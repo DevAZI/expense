@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cd D:\\\\kostaEx\\\\digiman\\\\be; .\\\\gradlew.bat compileJava --console=plain 2>&1 | Select-String -Pattern \"error:|warning:|BUILD|エラー|symbol\" | Select-Object -First 30; echo \"EXIT=$LASTEXITCODE\")",
+      "PowerShell(cd D:\\\\kostaEx\\\\digiman\\\\be; .\\\\gradlew.bat test --console=plain 2>&1 | Select-String -Pattern \"error:|BUILD|FAILED|Caused by|expected:|but was:|APPLICATION FAILED|Description:|Action:\" | Select-Object -First 40; echo \"EXIT=$LASTEXITCODE\")",
+      "PowerShell(cd D:\\\\kostaEx\\\\digiman\\\\be; .\\\\gradlew.bat compileJava --console=plain 2>&1 | Select-String -Pattern \"error:|BUILD\" | Select-Object -First 20; echo \"EXIT=$LASTEXITCODE\")",
+      "PowerShell(npm run *)"
+    ]
+  }
+}

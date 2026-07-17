@@ -1,0 +1,141 @@
+spring:
+  application:
+    name: expense
+
+  datasource:
+    url: jdbc:h2:file:./data/expense;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+
+# ---------------------------------------------------------------------------
+# 業務ルール。
+# 計画書 8.1 では本来DBのマスター・ルールテーブルで管理する対象だが、MVPでは
+# テーブル数を抑えるため設定に置いている。ルール実装は RuleContext 経由でしか
+# 値を読まないため、DB移行時の変更は RuleContext の供給元だけで済む。
+# ---------------------------------------------------------------------------
+expense:
+  rules:
+    # 取込対象月。PERIOD_OUT_OF_RANGE と、年省略日付の年補完に使う。
+    target-year-month: 2026-06
+
+    # 負数（返金・取消）を警告として出すか
+    negative-amount-warning: true
+
+    # 0円の申請を警告として出すか。入力漏れ・取消漏れの可能性があるため既定は出す
+    zero-amount-warning: true
+
+    # 取込日から何日先までの利用日を許容するか。0 なら翌日以降がRED。
+    # 前払いを利用日で申請する運用があるなら、その日数に合わせて緩める
+    allowed-future-days: 0
+
+    # 類似重複とみなす日付の近接幅（日）。実データの営業部 6/2 と 6/5 の
+    # 「新宿→渋谷 タクシー 1,260円」を拾える最小値として 3 を置いている。
+    # 広げると 6/9 と 6/25 の大阪・名古屋出張（同額28,400円だが別物）が誤検知になる。
+    similar-duplicate-window-days: 3
+
+    # HIGH_AMOUNT のしきい値（円）。この値を「超えた」ら警告。
+    # キーが [...] で囲ってあるのは必須。Spring Boot は Map のキーを「小文字英数字と - 」
+    # しか許さず、大文字や日本語のキーは例外も出さずに捨てる。ブラケット記法だけが原文を保つ。
+    #
+    # しきい値は実データの分布から置いた暫定値。森本さんに確認できないため、
+    # 「明らかに目立つ支出だけが挙がる」線に合わせている。詳細は ASSUMPTIONS.md。
+    high-amount:
+      default-threshold-yen: 100000
+      by-category:
+        "[TRANSPORTATION]": 20000        # 実データ最大 3,480
+        "[TRAVEL_EXPENSE]": 50000        # 実データ 28,400（大阪・名古屋新幹線往復）
+        "[ACCOMMODATION]": 30000         # 実データ 9,800
+        "[ENTERTAINMENT]": 100000        # 480,000 の会食を挙げる（計画書 2章）
+        "[MEETING]": 20000               # 実データ最大 5,600
+        "[SUPPLIES]": 50000              # 実データ最大 12,800
+        "[COMMUNICATION]": 20000         # 実データ 4,980
+        "[ADVERTISING]": 1000000         # 1,200,000 の一括を挙げる（計画書 2章）
+        "[PRODUCTION]": 300000           # 実データ最大 220,000 は通常運用とみなす
+        "[SOFTWARE]": 50000              # 実データ最大 12,800
+        "[HARDWARE]": 200000             # 298,000 のGPU部品を挙げる（計画書 8.4）
+        "[BOOKS]": 20000                 # 実データ最大 3,520
+        "[MEALS]": 20000                 # 実データ最大 1,450
+
+    # 入力費目 -> 標準費目。キーは正規化後（NFKC・前後空白除去・小文字化）の値。
+    # 誤記（例: 交通日）は意図的にマッピングしない。CATEGORY_UNMAPPED として
+    # 人が選ぶ / Phase 4 でAIが候補提示する、というのが計画書 11 の方針のため。
+    # 実データに出現する費目を1:1で寄せる。勘定科目を併合しない（交通費≠旅費交通費、
+    # 会議費≠交際費）。「交通日」は誤記だが意図的にマッピングしない。自動補正すると
+    # 経理が誤記に気づけなくなるため、CATEGORY_UNMAPPED で人に選ばせる（計画書 11）。
+    category-mappings:
+      # 営業部（ヘッダーが「勘定科目」）
+      "[交通費]": TRANSPORTATION
+      "[旅費交通費]": TRAVEL_EXPENSE
+      "[宿泊費]": ACCOMMODATION
+      "[交際費]": ENTERTAINMENT
+      "[会議費]": MEETING
+      "[消耗品費]": SUPPLIES
+      "[通信費]": COMMUNICATION
+      # マーケティング部（ヘッダーが「費目」）
+      "[広告費]": ADVERTISING
+      "[制作費]": PRODUCTION
+      # 開発部（ヘッダーが「Category」。勘定科目ではなく実費の種類で書かれている）
+      "[software]": SOFTWARE
+      "[hardware]": HARDWARE
+      "[書籍]": BOOKS
+      "[meals]": MEALS
+      # Travel は交通費と旅費交通費の両方が混在している（1,340円の目黒→渋谷 と
+      # 15,840円の大阪新幹線が同じ Travel）。決め打ちできないため広いほうへ寄せる。
+      # ASSUMPTIONS.md 記載の仮定。
+      "[travel]": TRANSPORTATION
+
+  # 部署別CSVスキーマ。
+  # 計画書 9.2 は部署ごとにパーサークラスを作る想定だが、8.2 はヘッダー定義を
+  # 差し替え可能にすることを求めている。MVPでは「1つのスキーマ駆動パーサー +
+  # 設定でのヘッダー別名」で両方を満たす。部署固有の癖が設定で表現できなくなった
+  # 時点で DepartmentCsvParser の実装を足す。
+  # 文字コード検出はここに無い。部署判定はヘッダーを読んで行うが、ヘッダーを読むには
+  # 先に文字コードが要るため、検出は部署非依存（BOM -> 厳密UTF-8 -> CP932）で
+  # CharsetDetector が行う。
+  #
+  # 別名の先頭が実データで確認した実際のヘッダー。以降は表記揺れへの備え。
+  # 部署間で別名が重なると取込時に部署の明示を要求されるので、追加時は注意すること
+  # （例: SALES の applicant-name に「氏名」を足すと MARKETING と衝突する）。
+  csv:
+    schemas:
+      SALES:
+        headers:
+          usage-date: [ "日付", "使用日" ]
+          applicant-name: [ "申請者", "申請者名" ]
+          category: [ "勘定科目", "科目" ]
+          amount: [ "金額(円)", "金額" ]
+          note: [ "備考", "摘要" ]
+      DEVELOPMENT:
+        headers:
+          usage-date: [ "Date", "usage_date" ]
+          applicant-name: [ "Employee", "applicant", "name" ]
+          category: [ "Category", "expense_category" ]
+          amount: [ "Amount(JPY)", "amount", "amount_yen" ]
+          note: [ "Notes", "note", "remarks" ]
+      MARKETING:
+        headers:
+          usage-date: [ "利用日" ]
+          applicant-name: [ "氏名", "担当者名" ]
+          category: [ "費目" ]
+          amount: [ "支払金額" ]
+          note: [ "メモ", "備考" ]
+
+logging:
+  level:
+    web.ai.expense: DEBUG
