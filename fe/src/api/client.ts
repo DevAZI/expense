@@ -1,6 +1,8 @@
 import type {
+  AiAdvisoryResult,
   Anomaly,
   ApiError,
+  BulkApproveResult,
   ExpenseDetail,
   Expense,
   ExpenseStatus,
@@ -80,6 +82,14 @@ export const api = {
     request<Anomaly[]>(`/api/anomalies${toQuery(params)}`),
 
   /**
+   * AI補助（異常検知・誤字脱字チェック）を実行する。同期でBedrockを呼ぶため数秒かかる。
+   * fileId 指定でその取込ファイルの明細だけ、省略時は未承認（PENDING）の明細が対象。
+   * 無効・資格情報なし・失敗は例外ではなく available=false で返る（助言は業務を止めない）。
+   */
+  aiAdvisories: (params: { fileId?: string; status?: string }) =>
+    request<AiAdvisoryResult>(`/api/ai/advisories${toQuery(params)}`, { method: 'POST' }),
+
+  /**
    * @param targetYearMonth "2026-06" 形式。省略するとサーバー設定の既定値が使われる。
    *                        対象月は期間外判定だけでなく、年省略日付の年の補完にも効く。
    */
@@ -108,6 +118,14 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }),
+
+  /** PENDING かつ警告なし（riskLevel=NONE）の明細をまとめて承認する。 */
+  approveClean: (reviewedBy: string) =>
+    request<BulkApproveResult>('/api/expenses/approve-clean', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewedBy }),
     }),
 
   /** 全データを削除する。承認履歴も消える。呼ぶ前に必ず確認を取ること。 */

@@ -1,0 +1,5 @@
+# docker compose の秘密環境変数（.env.example はコミットする）
+.env
+
+# H2 のローカルDBファイル
+be/data/

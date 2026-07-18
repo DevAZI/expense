@@ -2,6 +2,29 @@ spring:
   application:
     name: expense
 
+  # ---------------------------------------------------------------------------
+  # Spring AI / Bedrock Converse（AI補助レイヤー）。
+  # 資格情報は環境変数から供給する（AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY）。
+  # ここでは yml に秘密を書かず、リージョンとモデルだけを環境変数で受ける。
+  # access-key / secret-key を明示しないと AWS SDK の DefaultCredentialsProvider が
+  # 環境変数・プロファイル等から自動で拾う（＝キーが無くても起動は落ちない）。
+  # ---------------------------------------------------------------------------
+  ai:
+    # モデルセレクタ。bedrock-converse のみをチャットに使う。
+    model:
+      chat: bedrock-converse
+    bedrock:
+      aws:
+        region: ${AWS_REGION:ap-northeast-2}
+      converse:
+        chat:
+          # 使用モデルは環境変数 BEDROCK_MODEL_ID で差し替え可能。
+          # 既定は APAC 推論プロファイルの Claude 3 Haiku。
+          options:
+            model: ${BEDROCK_MODEL_ID:apac.anthropic.claude-3-haiku-20240307-v1:0}
+            temperature: 0.0
+            max-tokens: 2048
+
   datasource:
     url: jdbc:h2:file:./data/expense;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver
@@ -30,6 +53,15 @@ spring:
 # 値を読まないため、DB移行時の変更は RuleContext の供給元だけで済む。
 # ---------------------------------------------------------------------------
 expense:
+  # AI補助レイヤー（計画書 11章 / Phase 4）。決定的ルールとは完全に分離した助言専用。
+  # 承認ゲート・リスク判定には一切関与しない（結果は参考情報として別APIで返す）。
+  ai:
+    # 全体スイッチ。false なら Bedrock を一切呼ばず、助言APIは常に空を返す。
+    # 資格情報が無い環境（CI・テスト）でも既存機能を壊さないための逃げ道。
+    enabled: true
+    # 1回の助言リクエストで AI に渡す明細の上限。トークン量と費用を抑えるための上限。
+    max-rows-per-request: 80
+
   rules:
     # 取込対象月。PERIOD_OUT_OF_RANGE と、年省略日付の年補完に使う。
     target-year-month: 2026-06

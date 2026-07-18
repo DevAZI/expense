@@ -1,0 +1,44 @@
+# 経費CSV統合・異常検知システム — 本番(EC2)用の構成。
+#
+# 2コンテナ:
+#   backend  … Spring Boot(8080)。H2ファイルDBを named volume で永続化。
+#   frontend … Vite ビルド済み静的ファイルを nginx で配信。/api を backend へプロキシ。
+#              外部に公開するのはこの 80 番だけ。backend は内部ネットワークのみ。
+#
+# 使い方（EC2 上で）:
+#   1) .env.example を .env にコピーして値を入れる（AWS 資格情報など）
+#   2) docker compose up -d --build
+#   3) http://<EC2のパブリックIP>/  にアクセス
+#      セキュリティグループで TCP 80 を開けておくこと。
+
+services:
+  backend:
+    build: ./be
+    restart: unless-stopped
+    environment:
+      # --- Bedrock(AI補助レイヤー) 用。IAM ロールを使う場合は下2つは不要 ---
+      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-apac.anthropic.claude-3-haiku-20240307-v1:0}
+      # JVM のタイムゾーン（和暦・対象月の年補完のログを日本時間で見たい場合）
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      # H2 のファイルDB(./data/expense)を永続化。コンテナを作り直しても承認結果が残る。
+      - expense-data:/app/data
+    expose:
+      - "8080"          # frontend からのみ到達。ホストには公開しない
+    # デバッグでホストから直接叩きたいときだけ下を有効化（本番は非推奨）:
+    # ports:
+    #   - "8080:8080"
+
+  frontend:
+    build: ./fe
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  expense-data:

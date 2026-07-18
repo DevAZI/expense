@@ -18,4 +18,6 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID>, JpaSpec
     List<Expense> findBySourceFileId(UUID sourceFileId);
 
     List<Expense> findByStatus(ExpenseStatus status);
+
+    List<Expense> findByStatusAndRiskLevel(ExpenseStatus status, RiskLevel riskLevel);
 }

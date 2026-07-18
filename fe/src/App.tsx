@@ -7,9 +7,11 @@ import { ResetButton } from './features/import/ResetButton'
 import { SummaryCards } from './features/summary/SummaryCards'
 import { ExpenseTable } from './features/expenses/ExpenseTable'
 import { AnomalyList, type AnomalyFilter } from './features/anomalies/AnomalyList'
+import { AiAdvisoryPanel } from './features/ai/AiAdvisoryPanel'
+import { ApproveCleanButton } from './features/review/ApproveCleanButton'
 import { ExpenseDetailPanel } from './features/review/ExpenseDetailPanel'
 
-type Tab = 'expenses' | 'anomalies'
+type Tab = 'expenses' | 'anomalies' | 'ai'
 
 function App() {
   const [meta, setMeta] = useState<Meta | null>(null)
@@ -21,6 +23,8 @@ function App() {
   const [anomalyFilter, setAnomalyFilter] = useState<AnomalyFilter>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // reload のたびに増える。子が「データが変わった」ことを検知して数え直すための合図。
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   useEffect(() => {
     api.meta().then(setMeta).catch((e) => setError(String(e)))
@@ -35,6 +39,7 @@ function App() {
         setPage(p)
         setAnomalies(a)
         setError(null)
+        setReloadNonce((n) => n + 1)
       })
       .catch((e) => setError(String(e)))
   }, [filter, anomalyFilter])
@@ -77,6 +82,15 @@ function App() {
 
       {summary && <SummaryCards summary={summary} />}
 
+      <ApproveCleanButton
+        reloadToken={reloadNonce}
+        onApproved={() => {
+          // 承認で開いていた明細の状態が変わるので、選択は閉じて一覧を引き直す。
+          setSelectedId(null)
+          void reload()
+        }}
+      />
+
       <nav className="tabs" aria-label="表示切替">
         <button
           type="button"
@@ -94,11 +108,19 @@ function App() {
         >
           警告一覧{anomalies.length ? `（${anomalies.length}）` : ''}
         </button>
+        <button
+          type="button"
+          className={tab === 'ai' ? 'tab tab-active' : 'tab'}
+          aria-pressed={tab === 'ai'}
+          onClick={() => setTab('ai')}
+        >
+          AI補助
+        </button>
       </nav>
 
       <div className="main">
         <div className="content">
-          {tab === 'expenses' ? (
+          {tab === 'expenses' && (
             <ExpenseTable
               page={page}
               meta={meta}
@@ -107,7 +129,8 @@ function App() {
               onSelect={setSelectedId}
               selectedId={selectedId}
             />
-          ) : (
+          )}
+          {tab === 'anomalies' && (
             <AnomalyList
               anomalies={anomalies}
               meta={meta}
@@ -116,6 +139,7 @@ function App() {
               onSelect={setSelectedId}
             />
           )}
+          {tab === 'ai' && <AiAdvisoryPanel onSelect={setSelectedId} />}
         </div>
 
         {selectedId && (

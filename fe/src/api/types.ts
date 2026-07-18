@@ -73,6 +73,41 @@ export interface Anomaly {
   sourceRowNumber: number | null
 }
 
+/** AI補助（助言専用・非ブロッキング）。RED/YELLOW とは別体系で承認判定には影響しない。 */
+export type AiSeverity = 'HIGH' | 'MEDIUM' | 'LOW'
+
+export interface AiAnomaly {
+  expenseId: string
+  sourceRowNumber: number
+  department: string | null
+  applicantName: string | null
+  category: string | null
+  amountYen: number | null
+  severity: AiSeverity
+  anomalyType: string
+  reason: string
+  relatedRowNumbers: number[]
+}
+
+export interface AiTypo {
+  expenseId: string
+  sourceRowNumber: number
+  field: string
+  original: string
+  suggestion: string
+  reason: string
+}
+
+export interface AiAdvisoryResult {
+  enabled: boolean
+  available: boolean
+  model: string | null
+  message: string
+  analyzedCount: number
+  anomalies: AiAnomaly[]
+  typos: AiTypo[]
+}
+
 export interface Breakdown {
   code: string
   label: string
@@ -106,6 +141,10 @@ export interface ImportResult {
   yellowCount: number
   errorSummary: string | null
   sameHashImportFileIds: string[]
+}
+
+export interface BulkApproveResult {
+  approvedCount: number
 }
 
 export interface ResetResult {
