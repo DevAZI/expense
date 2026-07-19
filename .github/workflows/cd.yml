@@ -1,0 +1,118 @@
+name: CD (EC2)
+
+# main への push でテストを回し、通ったら EC2 へデプロイする。
+# 手動実行（workflow_dispatch）も可能。
+#
+# ─── 事前に用意する GitHub リポジトリの Secrets ─────────────────────────────
+#   EC2_HOST         … EC2 のパブリック IP または DNS 名
+#   EC2_USER         … SSH ユーザー（Ubuntu なら ubuntu / Amazon Linux なら ec2-user）
+#   EC2_SSH_KEY      … SSH 秘密鍵（PEM 全文。改行込みで貼り付ける）
+#   EC2_SSH_PORT     … （任意）SSH ポート。未設定なら 22
+# ─── 任意の Variables（Settings > Variables）─────────────────────────────
+#   EC2_APP_DIR      … EC2 上の配置先。未設定なら home 直下の app（= ~/app）
+#
+# ─── EC2 側の前提（1回だけ手で用意しておく）──────────────────────────────
+#   - Docker Engine + docker compose v2 プラグインが入っていること
+#   - セキュリティグループで TCP 80（と SSH 22）が開いていること
+#   - 配置先ディレクトリに .env を置いてあること（AWS 資格情報など）。
+#     ※ .env と be/data（H2のDB）は rsync が上書き・削除しないよう除外している。
+#       IAM ロールで Bedrock を使うなら .env の AWS キーは空でよい（.env.example 参照）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) テスト。ここが通らなければデプロイしない（品質ゲート）。
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Backend tests
+        working-directory: be
+        run: |
+          chmod +x gradlew
+          # RealDataImportTest はリポジトリ同梱の ../sample-data を読む（AWS 資格情報は不要）。
+          ./gradlew --no-daemon test
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: fe/package-lock.json
+
+      - name: Frontend lint & build
+        working-directory: fe
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+  # ---------------------------------------------------------------------------
+  # 2) デプロイ。CI 上のソースを EC2 へ rsync し、EC2 上で compose ビルド・起動。
+  #    push（main）のときだけ。手動実行時も動く。
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # 同時に複数のデプロイが走って EC2 上のビルドが競合しないようにする。
+    concurrency:
+      group: deploy-ec2
+      cancel-in-progress: false
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      EC2_SSH_PORT: ${{ secrets.EC2_SSH_PORT || '22' }}
+      # 未設定なら home 直下の app（remote shell が相対パスを home 起点に解決する）。
+      APP_DIR: ${{ vars.EC2_APP_DIR || 'app' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        # 秘密鍵は run に直接展開せず env 経由で渡す（スクリプトインジェクション回避）。
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # ホスト鍵を登録して StrictHostKeyChecking のプロンプトを避ける。
+          ssh-keyscan -p "$EC2_SSH_PORT" -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Ensure remote directory
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$EC2_SSH_PORT" \
+            "$EC2_USER@$EC2_HOST" "mkdir -p \"$APP_DIR\""
+
+      - name: Sync source to EC2
+        # --delete でEC2側の不要ファイルも掃除するが、--exclude したパスは
+        # 「転送も削除もしない（保護される）」ので .env と be/data は残る。
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key -p $EC2_SSH_PORT" \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'node_modules' \
+            --exclude 'fe/dist' \
+            --exclude 'be/build' \
+            --exclude 'be/data' \
+            --exclude '.env' \
+            ./ "$EC2_USER@$EC2_HOST:$APP_DIR/"
+
+      - name: Build & start containers on EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$EC2_SSH_PORT" "$EC2_USER@$EC2_HOST" \
+            "cd \"$APP_DIR\" && docker compose up -d --build && docker image prune -f"
