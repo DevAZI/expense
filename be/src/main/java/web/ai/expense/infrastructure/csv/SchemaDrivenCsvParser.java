@@ -13,6 +13,15 @@ import java.util.Optional;
  */
 public class SchemaDrivenCsvParser implements DepartmentCsvParser {
 
+    // 正準列順。配布された3部署の実ファイルはいずれも
+    // 「日付・申請者・費目・金額・備考」の並びで一致する。部署を明示選択したのに
+    // ヘッダー名が別名に無いとき、この位置で強制的にマッピングする根拠にする。
+    private static final int CANON_DATE = 0;
+    private static final int CANON_APPLICANT = 1;
+    private static final int CANON_CATEGORY = 2;
+    private static final int CANON_AMOUNT = 3;
+    private static final int CANON_NOTE = 4;
+
     private final Department department;
     private final CsvSchemaProperties.Headers headers;
 
@@ -36,12 +45,16 @@ public class SchemaDrivenCsvParser implements DepartmentCsvParser {
     }
 
     @Override
-    public List<ParsedCsvRow> parse(CsvHeader header, List<CsvReader.Row> dataRows) {
-        int dateIdx = required(header, headers.getUsageDate(), "日付");
-        int applicantIdx = required(header, headers.getApplicantName(), "申請者");
-        int categoryIdx = required(header, headers.getCategory(), "費目");
-        int amountIdx = required(header, headers.getAmount(), "金額");
+    public List<ParsedCsvRow> parse(CsvHeader header, List<CsvReader.Row> dataRows, boolean forced) {
+        int dateIdx = resolve(header, headers.getUsageDate(), CANON_DATE, "日付", forced);
+        int applicantIdx = resolve(header, headers.getApplicantName(), CANON_APPLICANT, "申請者", forced);
+        int categoryIdx = resolve(header, headers.getCategory(), CANON_CATEGORY, "費目", forced);
+        int amountIdx = resolve(header, headers.getAmount(), CANON_AMOUNT, "金額", forced);
         Optional<Integer> noteIdx = header.indexOfAny(headers.getNote());
+        if (noteIdx.isEmpty() && forced && header.size() > CANON_NOTE) {
+            // 備考は任意項目。強制マッピングでも正準位置に列があれば拾う。
+            noteIdx = Optional.of(CANON_NOTE);
+        }
 
         int expected = header.size();
         boolean noteIsLastColumn = noteIdx.isPresent() && noteIdx.get() == expected - 1;
@@ -83,10 +96,25 @@ public class SchemaDrivenCsvParser implements DepartmentCsvParser {
         return rows;
     }
 
-    private int required(CsvHeader header, List<String> aliases, String label) {
-        return header.indexOfAny(aliases)
-                .orElseThrow(() -> new CsvImportException(
-                        department + " のスキーマに必要な列「" + label + "」がヘッダーにありません"));
+    /**
+     * 列位置を解決する。まず別名で探し、見つからなければ:
+     * <ul>
+     *   <li>強制マッピング時（部署明示選択）は正準列位置を使う。ヘッダー名の差異を無視して
+     *       その部署として読み切る。位置がその行に無ければ {@link #at} が null を返し、
+     *       後段の検証（REQUIRED_FIELD_MISSING 等）が拾う。</li>
+     *   <li>自動判定時は必須列不足として取込失敗にする。</li>
+     * </ul>
+     */
+    private int resolve(CsvHeader header, List<String> aliases, int canonicalIndex, String label, boolean forced) {
+        Optional<Integer> byAlias = header.indexOfAny(aliases);
+        if (byAlias.isPresent()) {
+            return byAlias.get();
+        }
+        if (forced) {
+            return canonicalIndex;
+        }
+        throw new CsvImportException(
+                department + " のスキーマに必要な列「" + label + "」がヘッダーにありません");
     }
 
     private String at(List<String> columns, int index) {

@@ -45,7 +45,8 @@
   margin-bottom: 20px;
 }
 
-.month-picker {
+.month-picker,
+.department-picker {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -57,7 +58,8 @@
   margin-bottom: 10px;
 }
 
-.month-picker label {
+.month-picker label,
+.department-picker label {
   display: flex;
   align-items: center;
   gap: 8px;

@@ -73,7 +73,9 @@ public class ImportExpenseFileUseCase {
         try {
             csv = csvReader.read(detected.get().content(), detected.get().charset());
             parser = parserRegistry.select(csv.header(), requestedDepartment);
-            parsedRows = parser.parse(csv.header(), csv.dataRows());
+            // 部署を明示選択した取込は強制マッピング（ヘッダー名の差異を無視して正準列位置で読む）。
+            boolean forced = requestedDepartment != null;
+            parsedRows = parser.parse(csv.header(), csv.dataRows(), forced);
         } catch (CsvImportException e) {
             log.warn("取込失敗 file={} reason={}", fileName, e.getMessage());
             return saveFailure(fileName, hash, e.getMessage());
