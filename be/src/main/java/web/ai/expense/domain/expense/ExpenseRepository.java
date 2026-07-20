@@ -3,6 +3,7 @@ package web.ai.expense.domain.expense;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,4 +21,10 @@ public interface ExpenseRepository extends JpaRepository<Expense, UUID>, JpaSpec
     List<Expense> findByStatus(ExpenseStatus status);
 
     List<Expense> findByStatusAndRiskLevel(ExpenseStatus status, RiskLevel riskLevel);
+
+    /**
+     * ファイル横断の重複判定で、既に取込済みの突き合わせ相手を集める。却下済み（REJECTED）は
+     * 既に切り捨てた明細なので突き合わせ対象から外す（生きている PENDING / APPROVED だけ見る）。
+     */
+    List<Expense> findBySourceFileIdInAndStatusNot(Collection<UUID> sourceFileIds, ExpenseStatus status);
 }

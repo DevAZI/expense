@@ -16,6 +16,9 @@ import java.util.stream.Collectors;
  * これを取り逃がし、警告ゼロで承認まで通ってしまう。森本さんの言う「重複っぽいもの」は
  * まさにこれなので、決定的ルールで拾う。
  *
+ * <p><b>判定範囲</b>: 完全重複と同じく、同一取込内に加えて同一対象月に取込済みの明細（別ファイル）
+ * とも突き合わせる（{@link ExactDuplicateRule} 参照）。
+ *
  * <p><b>備考の類似度を判定の条件にしていない理由</b>: 上の例を文字bigramのJaccardで測ると
  * 0.375 で、閾値0.5では落ちる。「タクシー」のような短い備考は長い備考との類似度が構造的に
  * 低く出るため、類似度を門にすると肝心のケースを逃す。ここでは「同一人・同費目・同額・近接日」
@@ -31,47 +34,73 @@ public class SimilarDuplicateRule implements BatchRule {
     }
 
     @Override
-    public List<ValidationIssue> evaluate(List<ExpenseEvaluation> rows, RuleContext context) {
-        Map<String, List<ExpenseEvaluation>> groups = new LinkedHashMap<>();
+    public List<ValidationIssue> evaluate(List<ExpenseEvaluation> rows, List<Expense> priorExpenses, RuleContext context) {
+        Map<String, List<ExpenseEvaluation>> currentGroups = new LinkedHashMap<>();
         for (ExpenseEvaluation row : rows) {
             groupKey(row.expense()).ifPresent(key ->
-                    groups.computeIfAbsent(key, k -> new ArrayList<>()).add(row));
+                    currentGroups.computeIfAbsent(key, k -> new ArrayList<>()).add(row));
+        }
+
+        Map<String, List<Expense>> priorGroups = new LinkedHashMap<>();
+        for (Expense prior : priorExpenses) {
+            groupKey(prior).ifPresent(key ->
+                    priorGroups.computeIfAbsent(key, k -> new ArrayList<>()).add(prior));
         }
 
         int windowDays = context.similarDuplicateWindowDays();
         List<ValidationIssue> issues = new ArrayList<>();
 
-        for (List<ExpenseEvaluation> group : groups.values()) {
-            if (group.size() < 2) {
-                continue;
-            }
-            for (ExpenseEvaluation self : group) {
-                List<ExpenseEvaluation> partners = group.stream()
+        for (Map.Entry<String, List<ExpenseEvaluation>> entry : currentGroups.entrySet()) {
+            List<ExpenseEvaluation> sameFile = entry.getValue();
+            List<Expense> priorSameKey = priorGroups.getOrDefault(entry.getKey(), List.of());
+
+            for (ExpenseEvaluation self : sameFile) {
+                List<Expense> inFilePartners = sameFile.stream()
                         .filter(other -> other != self)
-                        .filter(other -> withinWindow(self.expense(), other.expense(), windowDays))
-                        // 備考まで一致する組は EXACT_DUPLICATE の担当。二重に警告しない。
-                        .filter(other -> !Objects.equals(noteKey(self.expense()), noteKey(other.expense())))
+                        .map(ExpenseEvaluation::expense)
+                        .filter(other -> isNearWithDifferentNote(self.expense(), other, windowDays))
+                        .toList();
+                List<Expense> priorPartners = priorSameKey.stream()
+                        .filter(other -> isNearWithDifferentNote(self.expense(), other, windowDays))
                         .toList();
 
-                if (partners.isEmpty()) {
+                if (inFilePartners.isEmpty() && priorPartners.isEmpty()) {
                     continue;
                 }
-                issues.add(buildIssue(self, partners));
+                issues.add(buildIssue(self, inFilePartners, priorPartners));
             }
         }
         return issues;
     }
 
-    private ValidationIssue buildIssue(ExpenseEvaluation self, List<ExpenseEvaluation> partners) {
-        String partnerDesc = partners.stream()
-                .map(p -> "行" + p.expense().getSourceRowNumber()
-                        + "(" + p.expense().getUsageDate() + " 備考=" + safeNote(p.expense()) + ")")
-                .collect(Collectors.joining(", "));
+    /** 近接日で、かつ備考まで一致はしない組（備考も一致する組は EXACT_DUPLICATE の担当）。 */
+    private boolean isNearWithDifferentNote(Expense self, Expense other, int windowDays) {
+        return withinWindow(self, other, windowDays)
+                && !Objects.equals(noteKey(self), noteKey(other));
+    }
+
+    private ValidationIssue buildIssue(ExpenseEvaluation self, List<Expense> inFilePartners,
+                                       List<Expense> priorPartners) {
+        List<String> parts = new ArrayList<>();
+        if (!inFilePartners.isEmpty()) {
+            parts.add(inFilePartners.stream()
+                    .map(p -> "行" + p.getSourceRowNumber() + "(" + p.getUsageDate() + " 備考=" + safeNote(p) + ")")
+                    .collect(Collectors.joining(", ")));
+        }
+        if (!priorPartners.isEmpty()) {
+            parts.add(priorPartners.stream()
+                    .map(p -> "別ファイル(" + p.getUsageDate() + " 備考=" + safeNote(p) + ")")
+                    .collect(Collectors.joining(", ")));
+        }
+        String partnerDesc = String.join(", ", parts);
+
+        List<Expense> allPartners = new ArrayList<>(inFilePartners);
+        allPartners.addAll(priorPartners);
 
         String evidence = "同一申請者・同費目・同額(" + self.expense().getAmountYen() + "円)で近接: "
                 + partnerDesc
                 + "。この行の備考=" + safeNote(self.expense())
-                + "。備考類似度=" + String.format("%.2f", maxSimilarity(self, partners))
+                + "。備考類似度=" + String.format("%.2f", maxSimilarity(self.expense(), allPartners))
                 + "。別利用か二重申請かを確認してください";
 
         ValidationIssue issue = ValidationIssue.of(RuleCode.SIMILAR_DUPLICATE, evidence);
@@ -79,9 +108,9 @@ public class SimilarDuplicateRule implements BatchRule {
         return issue;
     }
 
-    private double maxSimilarity(ExpenseEvaluation self, List<ExpenseEvaluation> partners) {
+    private double maxSimilarity(Expense self, List<Expense> partners) {
         return partners.stream()
-                .mapToDouble(p -> bigramJaccard(noteKey(self.expense()), noteKey(p.expense())))
+                .mapToDouble(p -> bigramJaccard(noteKey(self), noteKey(p)))
                 .max()
                 .orElse(0.0);
     }

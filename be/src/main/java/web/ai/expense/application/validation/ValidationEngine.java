@@ -1,6 +1,7 @@
 package web.ai.expense.application.validation;
 
 import org.springframework.stereotype.Component;
+import web.ai.expense.domain.expense.Expense;
 import web.ai.expense.domain.expense.RiskLevel;
 import web.ai.expense.domain.validation.*;
 
@@ -23,9 +24,11 @@ public class ValidationEngine {
     }
 
     /**
-     * @param rows expense に id が採番済みであること（issue が expenseId を持つため）
+     * @param rows          expense に id が採番済みであること（issue が expenseId を持つため）
+     * @param priorExpenses 同一対象月に取込済みの明細（今回のファイルは含まない）。バッチルールの
+     *                      ファイル横断の突き合わせに使う。ファイル間重複を見ないなら空リストでよい。
      */
-    public List<ValidationIssue> validate(List<ExpenseEvaluation> rows, RuleContext context) {
+    public List<ValidationIssue> validate(List<ExpenseEvaluation> rows, List<Expense> priorExpenses, RuleContext context) {
         List<ValidationIssue> issues = new ArrayList<>();
 
         for (ExpenseEvaluation row : rows) {
@@ -38,7 +41,7 @@ public class ValidationEngine {
         }
 
         for (BatchRule rule : batchRules) {
-            issues.addAll(rule.evaluate(rows, context));
+            issues.addAll(rule.evaluate(rows, priorExpenses, context));
         }
 
         return issues;

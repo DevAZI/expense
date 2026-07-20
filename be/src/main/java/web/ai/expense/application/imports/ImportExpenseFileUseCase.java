@@ -9,6 +9,7 @@ import web.ai.expense.config.ExpenseRuleProperties;
 import web.ai.expense.domain.expense.Department;
 import web.ai.expense.domain.expense.Expense;
 import web.ai.expense.domain.expense.ExpenseRepository;
+import web.ai.expense.domain.expense.ExpenseStatus;
 import web.ai.expense.domain.imports.*;
 import web.ai.expense.domain.validation.*;
 import web.ai.expense.infrastructure.csv.*;
@@ -88,7 +89,9 @@ public class ImportExpenseFileUseCase {
         importFileRepository.save(importFile);
 
         List<ExpenseEvaluation> evaluations = persistRows(parsedRows, importFile, parser.department(), snapshot);
-        List<ValidationIssue> issues = validationEngine.validate(evaluations, snapshot);
+        // ファイル横断の重複判定のため、同一対象月に取込済みの明細を突き合わせ相手として渡す。
+        List<Expense> priorExpenses = loadPriorExpensesInScope(snapshot.targetYearMonth(), importFile.getId());
+        List<ValidationIssue> issues = validationEngine.validate(evaluations, priorExpenses, snapshot);
         applyRiskLevels(evaluations, issues);
         issueRepository.saveAll(issues);
 
@@ -117,6 +120,26 @@ public class ImportExpenseFileUseCase {
         expenseRepository.saveAll(evaluations.stream().map(ExpenseEvaluation::expense).toList());
 
         return evaluations;
+    }
+
+    /**
+     * ファイル横断の重複判定に使う、既に取込済みの明細を集める。
+     *
+     * <p>突き合わせ範囲を同一対象月に絞るのは、対象月が経理の照合単位だから。別の対象月で
+     * 取り込んだ明細（＝別の精算バッチ）を混ぜると、月をまたいだ正当な定期費用まで重複扱いに
+     * なりうる。今回取り込み中のファイルは（対象月クエリに引っかかるので）id で明示的に除く。
+     */
+    private List<Expense> loadPriorExpensesInScope(YearMonth targetYearMonth, UUID currentFileId) {
+        List<UUID> priorFileIds = importFileRepository
+                .findByTargetYearMonthAndStatus(targetYearMonth.toString(), ImportStatus.COMPLETED)
+                .stream()
+                .map(ImportFile::getId)
+                .filter(id -> !id.equals(currentFileId))
+                .toList();
+        if (priorFileIds.isEmpty()) {
+            return List.of();
+        }
+        return expenseRepository.findBySourceFileIdInAndStatusNot(priorFileIds, ExpenseStatus.REJECTED);
     }
 
     private void applyRiskLevels(List<ExpenseEvaluation> evaluations, List<ValidationIssue> issues) {
